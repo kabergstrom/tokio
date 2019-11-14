@@ -5,12 +5,15 @@ extern crate test;
 use tokio::executor::thread_pool::{Builder, Spawner};
 use tokio::sync::oneshot;
 
+use mimalloc::MiMalloc;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{mpsc, Arc};
 use std::task::{Context, Poll};
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 struct Backoff(usize);
 
@@ -28,7 +31,7 @@ impl Future for Backoff {
     }
 }
 
-const NUM_THREADS: usize = 6;
+const NUM_THREADS: usize = 8;
 
 #[bench]
 fn spawn_many(b: &mut test::Bencher) {
@@ -64,7 +67,7 @@ fn yield_many(b: &mut test::Bencher) {
 
     let threadpool = Builder::new().num_threads(NUM_THREADS).build();
 
-    let tasks = TASKS_PER_CPU * num_cpus::get_physical();
+    let tasks = TASKS_PER_CPU * NUM_THREADS;
     let (tx, rx) = mpsc::sync_channel(tasks);
 
     b.iter(move || {
@@ -84,51 +87,51 @@ fn yield_many(b: &mut test::Bencher) {
     });
 }
 
-#[bench]
-fn ping_pong(b: &mut test::Bencher) {
-    const NUM_PINGS: usize = 1_000;
+// #[bench]
+// fn ping_pong(b: &mut test::Bencher) {
+//     const NUM_PINGS: usize = 1_000;
 
-    let threadpool = Builder::new().num_threads(NUM_THREADS).build();
+//     let threadpool = Builder::new().num_threads(NUM_THREADS).build();
 
-    let (done_tx, done_rx) = mpsc::sync_channel(1000);
-    let rem = Arc::new(AtomicUsize::new(0));
+//     let (done_tx, done_rx) = mpsc::sync_channel(1000);
+//     let rem = Arc::new(AtomicUsize::new(0));
 
-    b.iter(|| {
-        let done_tx = done_tx.clone();
-        let rem = rem.clone();
-        rem.store(NUM_PINGS, Relaxed);
+//     b.iter(|| {
+//         let done_tx = done_tx.clone();
+//         let rem = rem.clone();
+//         rem.store(NUM_PINGS, Relaxed);
 
-        let spawner = threadpool.spawner().clone();
+//         let spawner = threadpool.spawner().clone();
 
-        threadpool.spawn(async move {
-            for _ in 0..NUM_PINGS {
-                let rem = rem.clone();
-                let done_tx = done_tx.clone();
+//         threadpool.spawn(async move {
+//             for _ in 0..NUM_PINGS {
+//                 let rem = rem.clone();
+//                 let done_tx = done_tx.clone();
 
-                let spawner2 = spawner.clone();
+//                 let spawner2 = spawner.clone();
 
-                spawner.spawn(async move {
-                    let (tx1, rx1) = oneshot::channel();
-                    let (tx2, rx2) = oneshot::channel();
+//                 spawner.spawn(async move {
+//                     let (tx1, rx1) = oneshot::channel();
+//                     let (tx2, rx2) = oneshot::channel();
 
-                    spawner2.spawn(async move {
-                        rx1.await.unwrap();
-                        tx2.send(()).unwrap();
-                    });
+//                     spawner2.spawn(async move {
+//                         rx1.await.unwrap();
+//                         tx2.send(()).unwrap();
+//                     });
 
-                    tx1.send(()).unwrap();
-                    rx2.await.unwrap();
+//                     tx1.send(()).unwrap();
+//                     rx2.await.unwrap();
 
-                    if 1 == rem.fetch_sub(1, Relaxed) {
-                        done_tx.send(()).unwrap();
-                    }
-                });
-            }
-        });
+//                     if 1 == rem.fetch_sub(1, Relaxed) {
+//                         done_tx.send(()).unwrap();
+//                     }
+//                 });
+//             }
+//         });
 
-        done_rx.recv().unwrap();
-    });
-}
+//         done_rx.recv().unwrap();
+//     });
+// }
 
 #[bench]
 fn chained_spawn(b: &mut test::Bencher) {
